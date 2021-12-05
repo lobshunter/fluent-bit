@@ -17,6 +17,7 @@
  *  limitations under the License.
  */
 
+#include <errno.h>
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <unistd.h>
@@ -350,7 +351,10 @@ static inline int _mk_event_channel_create(struct mk_event_ctx *ctx,
 static inline int _mk_event_wait(struct mk_event_loop *loop) {
     struct mk_event_ctx *ctx = loop->data;
 
-    loop->n_events = epoll_wait(ctx->efd, ctx->events, ctx->queue_size, -1);
+    do {
+        loop->n_events = epoll_wait(ctx->efd, ctx->events, ctx->queue_size, -1);
+    } while ((loop->n_events < 0) && (errno == EINTR));
+
     return loop->n_events;
 }
 
