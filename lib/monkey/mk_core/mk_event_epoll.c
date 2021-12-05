@@ -17,9 +17,9 @@
  *  limitations under the License.
  */
 
-#include <unistd.h>
 #include <fcntl.h>
 #include <sys/epoll.h>
+#include <unistd.h>
 
 #ifdef MK_HAVE_EVENTFD
 #include <sys/eventfd.h>
@@ -29,24 +29,21 @@
 #include <sys/timerfd.h>
 #endif
 
-#include <time.h>
-
 #include <mk_core/mk_event.h>
 #include <mk_core/mk_memory.h>
 #include <mk_core/mk_utils.h>
+#include <time.h>
 
 /* For old systems */
 #ifndef EPOLLRDHUP
-#define EPOLLRDHUP  0x2000
+#define EPOLLRDHUP 0x2000
 #endif
 
-static inline int _mk_event_init()
-{
+static inline int _mk_event_init() {
     return 0;
 }
 
-static inline void *_mk_event_loop_create(int size)
-{
+static inline void *_mk_event_loop_create(int size) {
     int efd;
     struct mk_event_ctx *ctx;
 
@@ -57,16 +54,16 @@ static inline void *_mk_event_loop_create(int size)
     }
 
     /* Create the epoll instance */
- #ifdef EPOLL_CLOEXEC
+#ifdef EPOLL_CLOEXEC
     efd = epoll_create1(EPOLL_CLOEXEC);
- #else
+#else
     efd = epoll_create(1);
     if (efd > 0) {
         if (fcntl(efd, F_SETFD, FD_CLOEXEC) == -1) {
             perror("fcntl");
         }
     }
- #endif
+#endif
 
     if (efd == -1) {
         mk_libc_error("epoll_create");
@@ -87,8 +84,7 @@ static inline void *_mk_event_loop_create(int size)
 }
 
 /* Close handlers and memory */
-static inline void _mk_event_loop_destroy(struct mk_event_ctx *ctx)
-{
+static inline void _mk_event_loop_destroy(struct mk_event_ctx *ctx) {
     close(ctx->efd);
     mk_mem_free(ctx->events);
     mk_mem_free(ctx);
@@ -99,23 +95,21 @@ static inline void _mk_event_loop_destroy(struct mk_event_ctx *ctx)
  * the file descriptor have not been registered, create a new entry.
  */
 static inline int _mk_event_add(struct mk_event_ctx *ctx, int fd,
-                                int type, uint32_t events, void *data)
-{
+                                int type, uint32_t events, void *data) {
     int op;
     int ret;
     struct mk_event *event;
     struct epoll_event ep_event;
 
     /* Verify the FD status and desired operation */
-    event = (struct mk_event *) data;
+    event = (struct mk_event *)data;
     if (event->mask == MK_EVENT_EMPTY) {
         op = EPOLL_CTL_ADD;
-        event->fd   = fd;
+        event->fd = fd;
         event->status = MK_EVENT_REGISTERED;
         event->type = type;
 
-    }
-    else {
+    } else {
         op = EPOLL_CTL_MOD;
         if (type != MK_EVENT_UNMODIFIED) {
             event->type = type;
@@ -142,8 +136,7 @@ static inline int _mk_event_add(struct mk_event_ctx *ctx, int fd,
 }
 
 /* Delete an event */
-static inline int _mk_event_del(struct mk_event_ctx *ctx, struct mk_event *event)
-{
+static inline int _mk_event_del(struct mk_event_ctx *ctx, struct mk_event *event) {
     int ret;
 
     if ((event->status & MK_EVENT_REGISTERED) == 0) {
@@ -167,8 +160,7 @@ static inline int _mk_event_del(struct mk_event_ctx *ctx, struct mk_event *event
 #ifdef MK_HAVE_TIMERFD_CREATE
 /* Register a timeout file descriptor */
 static inline int _mk_event_timeout_create(struct mk_event_ctx *ctx,
-                                           time_t sec, long nsec, void *data)
-{
+                                           time_t sec, long nsec, void *data) {
     int ret;
     int timer_fd;
     struct itimerspec its;
@@ -181,17 +173,17 @@ static inline int _mk_event_timeout_create(struct mk_event_ctx *ctx,
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
         mk_libc_error("clock_gettime");
         return -1;
-	}
+    }
 
     /* expiration interval */
-    its.it_interval.tv_sec  = sec;
+    its.it_interval.tv_sec = sec;
     its.it_interval.tv_nsec = nsec;
 
     /*
      * initial expiration: note that we don't use nanoseconds in the timer,
      * feel free to send a Pull Request if you need it.
      */
-    its.it_value.tv_sec  = now.tv_sec + sec;
+    its.it_value.tv_sec = now.tv_sec + sec;
     its.it_value.tv_nsec = 0;
 
     timer_fd = timerfd_create(CLOCK_MONOTONIC, 0);
@@ -208,7 +200,7 @@ static inline int _mk_event_timeout_create(struct mk_event_ctx *ctx,
     }
 
     event = data;
-    event->fd   = timer_fd;
+    event->fd = timer_fd;
     event->type = MK_EVENT_NOTIFICATION;
     event->mask = MK_EVENT_EMPTY;
 
@@ -222,27 +214,26 @@ static inline int _mk_event_timeout_create(struct mk_event_ctx *ctx,
 
     return timer_fd;
 }
-#else /* MK_HAVE_TIMERFD_CREATE */
+#else  /* MK_HAVE_TIMERFD_CREATE */
 
 struct fd_timer {
     int fd;
     time_t sec;
-    long   nsec;
+    long nsec;
 };
 
 /*
  * Timeout worker, it writes a byte every certain amount of seconds, it finish
  * once the other end of the pipe closes the fd[0].
  */
-void _timeout_worker(void *arg)
-{
+void _timeout_worker(void *arg) {
     int ret;
     uint64_t val = 1;
     struct fd_timer *timer;
     struct timespec t_spec;
 
-    timer = (struct fd_timer *) arg;
-    t_spec.tv_sec  = timer->sec;
+    timer = (struct fd_timer *)arg;
+    t_spec.tv_sec = timer->sec;
     t_spec.tv_nsec = timer->nsec;
 
     while (1) {
@@ -267,8 +258,7 @@ void _timeout_worker(void *arg)
  * function through a thread and a pipe(2).
  */
 static inline int _mk_event_timeout_create(struct mk_event_ctx *ctx,
-                                           time_t sec, long nsec, void *data)
-{
+                                           time_t sec, long nsec, void *data) {
     int ret;
     int fd[2];
     struct mk_event *event;
@@ -287,7 +277,7 @@ static inline int _mk_event_timeout_create(struct mk_event_ctx *ctx,
         return ret;
     }
 
-    event = (struct mk_event *) data;
+    event = (struct mk_event *)data;
     event->fd = fd[0];
     event->type = MK_EVENT_NOTIFICATION;
     event->mask = MK_EVENT_EMPTY;
@@ -296,8 +286,8 @@ static inline int _mk_event_timeout_create(struct mk_event_ctx *ctx,
     event->mask = MK_EVENT_READ;
 
     /* Compose the timer context, this is released inside the worker thread */
-    timer->fd   = fd[1];
-    timer->sec  = sec;
+    timer->fd = fd[1];
+    timer->sec = sec;
     timer->nsec = nsec;
 
     /* Now the dirty workaround, create a thread */
@@ -313,23 +303,21 @@ static inline int _mk_event_timeout_create(struct mk_event_ctx *ctx,
 }
 #endif /* MK_HAVE_TIMERFD_CREATE */
 
-static inline int _mk_event_timeout_destroy(struct mk_event_ctx *ctx, void *data)
-{
+static inline int _mk_event_timeout_destroy(struct mk_event_ctx *ctx, void *data) {
     struct mk_event *event;
 
     if (!data) {
         return 0;
     }
 
-    event = (struct mk_event *) data;
+    event = (struct mk_event *)data;
     _mk_event_del(ctx, event);
     close(event->fd);
     return 0;
 }
 
 static inline int _mk_event_channel_create(struct mk_event_ctx *ctx,
-                                           int *r_fd, int *w_fd, void *data)
-{
+                                           int *r_fd, int *w_fd, void *data) {
     int ret;
     int fd[2];
     struct mk_event *event;
@@ -359,15 +347,13 @@ static inline int _mk_event_channel_create(struct mk_event_ctx *ctx,
     return 0;
 }
 
-static inline int _mk_event_wait(struct mk_event_loop *loop)
-{
+static inline int _mk_event_wait(struct mk_event_loop *loop) {
     struct mk_event_ctx *ctx = loop->data;
 
     loop->n_events = epoll_wait(ctx->efd, ctx->events, ctx->queue_size, -1);
     return loop->n_events;
 }
 
-static inline char *_mk_event_backend()
-{
+static inline char *_mk_event_backend() {
     return "epoll";
 }
